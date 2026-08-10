@@ -1,7 +1,6 @@
 """
 backend.py
 ----------
-Single-file Flask API backend for Urdu OCR.
 
 Contains everything needed to serve predictions:
   - CRNN model definition
