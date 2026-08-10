@@ -1,6 +1,7 @@
 """
 backend.py
 ----------
+Single-file Flask API backend for Urdu OCR.
 
 Contains everything needed to serve predictions:
   - CRNN model definition
@@ -31,7 +32,12 @@ import numpy as np
 import requests
 import torch
 import torch.nn as nn
-from flask import Flask, request, jsonify, render_template
+
+# Keep torch's thread pool small - reduces memory overhead on low-RAM hosts
+# like Render's free tier. Must be set before any model/tensor work happens.
+torch.set_num_threads(1)
+
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from PIL import Image
 
@@ -40,7 +46,8 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(APP_ROOT, "best_model.pth")
 VOCAB_PATH = os.path.join(APP_ROOT, "vocab.json")
 
-# TODO: replace with your actual GitHub Release asset URL
+# Direct download URL for the GitHub Release asset containing best_model.pth
+# Replace this with your actual release asset URL if it changes.
 MODEL_URL = "https://github.com/Hamza-Ali01/project4/releases/download/v1.0-model/best_model.pth"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -183,11 +190,16 @@ except Exception as e:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    # index.html sits at the repo root next to backend.py, not in a
+    # templates/ folder, so serve it directly instead of using render_template.
+    return send_from_directory(APP_ROOT, "index.html")
 
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    if model is None or vocab is None:
+        return jsonify({"error": "Model is not loaded on the server. Check server logs."}), 503
+
     if "image" not in request.files:
         return jsonify({"error": "No image file provided. Send it as form field 'image'."}), 400
 
