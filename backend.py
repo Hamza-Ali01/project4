@@ -10,11 +10,15 @@ Contains everything needed to serve predictions:
   - CTC greedy decoder
   - Flask API with one endpoint: POST /predict
 
-Requires "best_model.pth" and "vocab.json" to already exist in the same
-folder as this file (produced by train.py in the main project).
+"best_model.pth" is downloaded automatically at startup from a GitHub
+Release asset if it isn't already present locally. "vocab.json" must
+still be committed to the repo (it's small).
 
-Run:
+Run locally:
     python backend.py
+
+Run in production (e.g. Render):
+    gunicorn backend:app
 
 The server starts at http://localhost:5000
 Frontend (a separate index.html) calls POST http://localhost:5000/predict
@@ -25,6 +29,7 @@ import json
 import os
 
 import numpy as np
+import requests
 import torch
 import torch.nn as nn
 from flask import Flask, request, jsonify, render_template
@@ -36,7 +41,25 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(APP_ROOT, "best_model.pth")
 VOCAB_PATH = os.path.join(APP_ROOT, "vocab.json")
 
+# TODO: replace with your actual GitHub Release asset URL
+MODEL_URL = "https://github.com/Hamza-Ali01/project4/releases/download/v1.0-model/best_model.pth"
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def download_model_if_missing():
+    """Download best_model.pth from GitHub Releases if it isn't already on disk."""
+    if os.path.exists(MODEL_PATH):
+        return
+    print("Model not found locally, downloading from GitHub Releases...")
+    response = requests.get(MODEL_URL, stream=True)
+    response.raise_for_status()
+    with open(MODEL_PATH, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+    print("Model download complete.")
+
 
 # Vocabulary (char <-> index mapping, index 0 = CTC blank)
 class Vocab:
@@ -141,9 +164,22 @@ def load_model_and_vocab():
     model.to(device)
     model.eval()
 
+
 # Flask API
 app = Flask(__name__)
 CORS(app)  # allow the separate frontend HTML file to call this API from any origin
+
+# --- Load the model at import time so this works both with `python backend.py`
+# --- AND with `gunicorn backend:app` (gunicorn never runs the __main__ block below).
+try:
+    download_model_if_missing()
+    if not os.path.exists(VOCAB_PATH):
+        print(f"ERROR: could not find '{VOCAB_PATH}'. Make sure vocab.json is committed to the repo.")
+    else:
+        load_model_and_vocab()
+        print(f"Model loaded (vocab size: {vocab.size}).")
+except Exception as e:
+    print(f"ERROR during model startup: {e}")
 
 
 @app.route("/")
@@ -181,10 +217,6 @@ def health():
 
 
 if __name__ == "__main__":
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(VOCAB_PATH):
-        print(f"ERROR: could not find '{MODEL_PATH}' or '{VOCAB_PATH}'.")
-        print("Make sure best_model.pth and vocab.json are in the same folder as backend.py")
-    else:
-        load_model_and_vocab()
-        print(f"Model loaded (vocab size: {vocab.size}). Starting API at http://localhost:5000")
-        app.run(host="0.0.0.0", port=5000, debug=False)
+    # Model is already loaded above at import time; just start the dev server.
+    print("Starting API at http://localhost:5000")
+    app.run(host="0.0.0.0", port=5000, debug=False)
